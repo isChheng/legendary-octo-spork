@@ -85,7 +85,21 @@ a:hover { text-decoration: underline; }
   touch-action: none;
 }
 #globe-earth { pointer-events: none; }
-:is(.google-active, .maplibre-active) #globe-earth { display: none; }
+#globe-preview {
+  position: absolute;
+  z-index: -3;
+  top: 46%;
+  left: 50%;
+  width: min(86%, max(381.5px, 70svh));
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  overflow: hidden;
+  pointer-events: none;
+  background: radial-gradient(circle at 33% 32%, #253d57, #0c1423 73%, #233452);
+}
+#globe-preview img { display: block; width: 100%; height: 100%; }
+:is(.google-active, .maplibre-active) :is(#globe-earth, #globe-preview) { display: none; }
 #globe:active { cursor: grabbing; }
 #google-globe, #maplibre { position: absolute; inset: 0; z-index: -2; touch-action: none; }
 :is(#google-globe, #maplibre)[aria-hidden="true"] { opacity: 0; pointer-events: none; }
@@ -310,7 +324,9 @@ details[open] > summary > .chevron,
 .activity-value strong { color: var(--text); font-size: clamp(21px, 2.6vw, 34px); font-weight: 470; letter-spacing: -.045em; }
 .comparison, #coverage-note { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .comparison { margin-top: 2px; }
-.comparison strong { color: var(--warm); font-weight: 580; }
+.comparison p { color: var(--warm); }
+.comparison button { min-height: 24px; color: var(--warm); pointer-events: auto; }
+.comparison button:hover:enabled { text-decoration: underline; }
 #coverage-note { margin-top: 8px; max-width: 26ch; }
 .inspector { width: max-content; max-width: 100%; margin-bottom: 6px; pointer-events: auto; }
 .inspector summary { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; color: var(--muted); font-size: 12px; }

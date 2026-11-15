@@ -237,6 +237,8 @@ export function createData(baseUrl) {
     const { start, end } = span(params, 31);
     const bounds = box(params);
     const selected = dataset(params.dataset);
+    const view = params.view ?? "full";
+    if (!["full", "dots", "cells"].includes(view)) fail("Unsupported map grid view");
     const days = (params.days ?? []).map((value) => day(value, "days"));
     if (days.some((value) => value < start || value > end)) fail("Selected days must be within the date range");
     const viewport = params.viewport?.length ? params.viewport.map(Number) : null;
@@ -312,16 +314,18 @@ export function createData(baseUrl) {
         : [`gy * ${size} + ${size / 2}`, `gx * ${size} + ${size / 2}`];
     }
     if (!source) return { data: [], cell_size: size };
+    const fields = ["sum(n)::DOUBLE AS detection_count"];
+    if (view !== "cells") fields.push(`(${center[0]})::DOUBLE AS mean_latitude`, `(${center[1]})::DOUBLE AS mean_longitude`);
+    if (view === "full") fields.push(`(${observedDays})::INTEGER AS observed_days`,
+      "string_agg(DISTINCT platform, ',' ORDER BY platform) AS platforms", "sum(frp)::DOUBLE AS frp_sum_mw");
     const data = await rows(`
       WITH observations AS (${observations})
       SELECT (gx * ${size})::DOUBLE AS west, (gy * ${size})::DOUBLE AS south,
-        (${center[0]})::DOUBLE AS mean_latitude, (${center[1]})::DOUBLE AS mean_longitude,
-        sum(n)::DOUBLE AS detection_count, (${observedDays})::INTEGER AS observed_days,
-        string_agg(DISTINCT platform, ',' ORDER BY platform) AS platforms, sum(frp)::DOUBLE AS frp_sum_mw
+        ${list(fields)}
       FROM observations
       GROUP BY gx, gy ORDER BY gy, gx
     `, signal);
-    for (const row of data) row.platforms = row.platforms.split(",");
+    if (view === "full") for (const row of data) row.platforms = row.platforms.split(",");
     return { data, cell_size: size };
   }
 

@@ -1,4 +1,4 @@
-import { createGlobe } from "./globe.js?v=progressive-load";
+import { createGlobe } from "./globe.js?v=on-demand-map";
 import { enhanceSelect } from "./choice-menu.js";
 import { mapDetail } from "./map-detail.js";
 import { seasonalMannKendall } from "./trend.js";
@@ -51,12 +51,11 @@ let calendar = [];
 let historyRows = [];
 let selectionRequest;
 let mapRequest;
+let cellRequest;
 let exportRequest;
 let mapTimer;
 let mapKey;
 const mapCache = new Map();
-let anomalyTimer;
-let anomalyStarted;
 let historyRequest;
 let customBounds = asBounds(regions.cambodia);
 let regionChosen = false;
@@ -91,7 +90,7 @@ async function api(path, params, signal) {
   if (path === "/map-config") {
     if (dataUrl || config.googleMapsKey) return { googleMapsKey: config.googleMapsKey || null };
   } else if (dataUrl) {
-    browserData ??= import("./data.js?v=progressive-load").then(({ createData }) => createData(dataUrl));
+    browserData ??= import("./data.js?v=on-demand-map").then(({ createData }) => createData(dataUrl));
     const request = await browserData;
     return request(path, params, signal);
   }
@@ -119,6 +118,7 @@ function showCoordinates(lat, lon) {
 
 let googleGlobe;
 let mapLibre;
+let mapLibreLoad;
 let flatMap = false;
 let satellite = false;
 let googleLoad;
@@ -184,11 +184,13 @@ function showLocalMap(flat) {
 
 function selectBasemap(useSatellite) {
   satellite = useSatellite;
-  mapLibre?.setSatellite(satellite);
+  if (mapLibre) mapLibre.setSatellite(satellite);
+  else mapLibreLoad ??= loadEnhancedBasemap();
   showLocalMap(flatMap);
 }
 
-async function initMapLibre() {
+async function loadEnhancedBasemap() {
+  mapLibreStatus = "Loading detailed basemap…";
   try {
     const { createMapLibreMap } = await import("./maplibre-map.js");
     mapLibre = await createMapLibreMap($("maplibre"), showCell, (lat, lon) => {
@@ -197,13 +199,16 @@ async function initMapLibre() {
       if (!googleGlobe) scheduleMap();
     });
     mapLibre.setFlat(flatMap);
+    mapLibre.setSatellite(satellite);
     mapLibre.center(bounds());
-    $("style-dark").disabled = false;
-    $("style-satellite").disabled = false;
+    mapLibreStatus = "";
+    if (!googleGlobe && !googleLoad) $("basemap-status").textContent = "";
     updateMapView();
   } catch {
-    mapLibreStatus = "Dark map unavailable. Showing bundled NASA Blue Marble.";
+    mapLibreStatus = "Detailed basemap unavailable. Showing bundled NASA Blue Marble.";
     if (!googleGlobe && !googleLoad) $("basemap-status").textContent = mapLibreStatus;
+  } finally {
+    mapLibreLoad = undefined;
   }
 }
 
@@ -266,15 +271,34 @@ function showDetails(title, values) {
   }));
 }
 
-function showCell(cell) {
-  showDetails(mapDots ? "Selected activity dot" : "Selected grid cell", [
-    [mapDots ? "Average location" : "Center", `${coordinate(cell.latitude, "S", "N", 3)}, ${coordinate(cell.longitude, "W", "E", 3)}`],
+async function showCell(cell) {
+  cellRequest?.abort();
+  const request = new AbortController();
+  cellRequest = request;
+  const dots = cell.query.get("view") === "dots";
+  const title = dots ? "Selected activity dot" : "Selected grid cell";
+  const summary = [
+    [dots ? "Average location" : "Center", `${coordinate(cell.latitude, "S", "N", 3)}, ${coordinate(cell.longitude, "W", "E", 3)}`],
     ["Detections", format(cell.detection_count)],
-    ["Days with detections", format(cell.observed_days)],
-    ["Platforms", cell.platforms.map((platform) => platformNames[platform] ?? platform).join(", ")],
-    ["Total FRP", `${format(Math.round(cell.frp_sum_mw))} MW`],
-  ]);
+  ];
+  showDetails(title, [...summary, ["Details", "Loading…"]]);
   $("inspector").open = true;
+  const query = new URLSearchParams(cell.query);
+  query.set("view", "full");
+  query.delete("viewport");
+  for (const edge of [cell.south, cell.south + cell.size, cell.west, cell.west + cell.size]) query.append("viewport", edge);
+  try {
+    const { data: [detail] } = await api("/v1/spatial/grid", query, request.signal);
+    if (request.signal.aborted) return;
+    if (!detail) throw new Error("No matching observations");
+    showDetails(title, [...summary,
+      ["Days with detections", format(detail.observed_days)],
+      ["Platforms", detail.platforms.map((platform) => platformNames[platform] ?? platform).join(", ")],
+      ["Total FRP", detail.frp_sum_mw == null ? "Unavailable" : `${format(Math.round(detail.frp_sum_mw))} MW`],
+    ]);
+  } catch {
+    if (!request.signal.aborted) showDetails(title, [...summary, ["Details", "Unavailable. Select the cell to retry."]]);
+  }
 }
 
 function signatures(period, complete) {
@@ -426,11 +450,9 @@ function highlightWeek(week) {
 function scheduleMap() {
   if (!firstPeriod || view !== "explore") return;
   clearTimeout(mapTimer);
-  clearTimeout(anomalyTimer);
-  mapTimer = setTimeout(async () => {
+  mapTimer = setTimeout(() => {
     mapTimer = undefined;
-    await loadMap();
-    scheduleAnomaly();
+    loadMap();
   }, 180);
 }
 
@@ -445,6 +467,8 @@ function cancelMapLoad() {
 
 function resetMap() {
   cancelMapLoad();
+  cellRequest?.abort();
+  cellRequest = undefined;
   exportRequest?.abort();
   exportRequest = new AbortController();
   mapCache.clear();
@@ -453,7 +477,7 @@ function resetMap() {
   $("map-key-label").textContent = "";
   $("map-message").textContent = "Loading map observations…";
   setCells([]);
-  scheduleMap();
+  if (view === "explore") loadMap();
 }
 
 async function loadMap() {
@@ -462,7 +486,8 @@ async function loadMap() {
   const { dots, size, viewport } = mapDetail(camera);
   const { start, end } = dates(selectedPeriod);
   const params = new URLSearchParams({
-    ...bounds(), ...sensorParam(), start_date: selected[0] ?? start, end_date: selected.at(-1) ?? end, cell_size: size,
+    ...bounds(), ...sensorParam(), start_date: selected[0] ?? start, end_date: selected.at(-1) ?? end,
+    cell_size: size, view: dots ? "dots" : "cells",
   });
   for (const bound of viewport ?? []) params.append("viewport", bound);
   if (selected.length && !isRun()) {
@@ -487,7 +512,7 @@ async function loadMap() {
         const color = `rgba(${red}, ${green}, ${blue}, ${.56 + .38 * strength})`;
         const latitude = dots ? row.mean_latitude : row.south + size / 2;
         const longitude = dots ? row.mean_longitude : row.west + size / 2;
-        return { ...row, size, strength, color, latitude, longitude };
+        return { ...row, size, strength, color, latitude, longitude, query: params };
       });
     }
     mapCache.delete(key);
@@ -508,20 +533,25 @@ async function loadMap() {
   }
 }
 
-function scheduleAnomaly() {
-  const request = selectionRequest;
-  if (!request || request.signal.aborted || !calendar.length || anomalyStarted === request
-      || view !== "explore" || mapTimer !== undefined || mapRequest) return;
-  clearTimeout(anomalyTimer);
-  const period = selectedPeriod;
-  const bbox = bounds();
-  const rows = calendar;
-  anomalyTimer = setTimeout(() => {
-    anomalyStarted = request;
-    loadAnomaly(period, bbox, rows, request.signal).catch((error) => {
-      if (!request.signal.aborted) $("anomaly").title = `Historical comparison unavailable. ${error.message}`;
-    });
-  }, 400);
+async function compareActivity() {
+  const { signal } = selectionRequest;
+  const button = $("compare-activity");
+  const output = $("anomaly");
+  button.disabled = true;
+  output.hidden = false;
+  output.textContent = "Loading comparison…";
+  try {
+    const result = await loadAnomaly(selectedPeriod, bounds(), calendar, signal);
+    if (signal.aborted) return;
+    output.textContent = result?.label ?? "Historical comparison unavailable for this month.";
+    if (result) output.title = result.title;
+    button.hidden = true;
+  } catch {
+    if (!signal.aborted) {
+      output.textContent = "Could not load the comparison.";
+      button.disabled = false;
+    }
+  }
 }
 
 async function loadAnomaly(period, bbox, rows, signal) {
@@ -557,9 +587,12 @@ async function loadAnomaly(period, bbox, rows, signal) {
   const median = (values[Math.floor((values.length - 1) / 2)] + values[Math.ceil((values.length - 1) / 2)]) / 2;
   if (!median) return;
   const delta = (rows.reduce((sum, row) => sum + row[key], 0) - median) / median;
-  $("anomaly").textContent = new Intl.NumberFormat("en", { style: "percent", signDisplay: "exceptZero" }).format(delta);
-  $("anomaly").title = `Median of ${values.length} previous ${monthNames[month - 1]} values: ${format(Math.round(median))} cell-days`
-    + (harmonized ? ", adjusted for the satellites flying each year" : "");
+  const percent = new Intl.NumberFormat("en", { style: "percent", signDisplay: "exceptZero" }).format(delta);
+  return {
+    label: `${percent} vs same-month median`,
+    title: `Median of ${values.length} previous ${monthNames[month - 1]} values: ${format(Math.round(median))} cell-days`
+      + (harmonized ? ", adjusted for the satellites flying each year" : ""),
+  };
 }
 
 function sensorParam() {
@@ -570,7 +603,6 @@ async function loadSelection() {
   $("area-name").textContent = areaName();
   $("history-area").textContent = areaName() + " · " + $("dataset").selectedOptions[0].textContent;
   if (!firstPeriod) return;
-  clearTimeout(anomalyTimer);
   selectionRequest?.abort();
   const request = new AbortController();
   selectionRequest = request;
@@ -584,7 +616,9 @@ async function loadSelection() {
   calendar = [];
   drawCalendar();
   $("activity").textContent = "—";
-  $("anomaly").textContent = "—";
+  $("compare-activity").hidden = false;
+  $("compare-activity").disabled = true;
+  $("anomaly").hidden = true;
   $("anomaly").removeAttribute("title");
   $("coverage-note").textContent = "Loading calendar…";
   showDetails("Month overview", []);
@@ -595,8 +629,9 @@ async function loadSelection() {
     if (request.signal.aborted) return;
     calendar = response.data;
     drawCalendar();
-    drawSelection();
+    if (!cellRequest) drawSelection();
     $("activity").textContent = calendar.length ? format(calendar.reduce((sum, row) => sum + row.active_cell_days, 0)) : "—";
+    $("compare-activity").disabled = !calendar.length;
     const active = signatures(period, false);
     const full = signatures(period, true);
     $("coverage-note").textContent = !active ? "No archive coverage for this month."
@@ -612,7 +647,6 @@ async function loadSelection() {
         $("coverage-note").textContent = [existing, "Missing this month: " + missing.map((key) => datasets[key]).join(", ") + "."].filter(Boolean).join(" ");
       }
     }
-    scheduleAnomaly();
   } catch (error) {
     if (!request.signal.aborted) $("coverage-note").textContent = error.message;
   }
@@ -829,7 +863,6 @@ function setView(next) {
   document.querySelectorAll("[data-view]").forEach((button) => button.setAttribute("aria-pressed", button.dataset.view === next));
   if (next === "history") {
     cancelMapLoad();
-    clearTimeout(anomalyTimer);
     loadHistory();
   } else {
     historyRequest?.abort();
@@ -935,6 +968,7 @@ $("zoom-in").addEventListener("click", () => activeGlobe().changeZoom(1.35));
 $("zoom-out").addEventListener("click", () => activeGlobe().changeZoom(1 / 1.35));
 $("recenter").addEventListener("click", centerMaps);
 $("about").addEventListener("click", () => $("methodology").showModal());
+$("compare-activity").addEventListener("click", compareActivity);
 $("history-form").addEventListener("submit", (event) => { event.preventDefault(); loadHistory(); });
 $("download-calendar").addEventListener("click", () => csvDownload(`firms-${selectedPeriod}-calendar.csv`, calendar));
 $("download-points").addEventListener("click", downloadPoints);
@@ -948,9 +982,8 @@ $("download-visual").addEventListener("click", () => {
 document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
 
 centerMaps();
-// Give the interactive globe a frame before loading the archive or the enhanced basemap.
+// Paint the globe before requesting the archive. Detailed basemaps are selected by the visitor.
 requestAnimationFrame(() => requestAnimationFrame(() => {
   init();
-  initMapLibre();
   initGoogleMap();
 }));

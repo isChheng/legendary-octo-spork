@@ -19,9 +19,11 @@ export function createGlobe(canvas, onSelect, onMove, onViewportChange) {
   earthCanvas.id = "globe-earth";
   earthCanvas.setAttribute("aria-hidden", "true");
   canvas.before(earthCanvas);
-  let renderer = createEarthRenderer(earthCanvas);
+  const poster = document.getElementById("globe-preview");
+  let renderer;
   const texture = document.createElement("canvas");
   let earth;
+  let detailedEarth;
   let source;
   let longitude = 104.8;
   let latitude = 17;
@@ -54,6 +56,7 @@ export function createGlobe(canvas, onSelect, onMove, onViewportChange) {
   function showEarth(image) {
     earth = image;
     source = undefined;
+    if (renderer === undefined) renderer = createEarthRenderer(earthCanvas);
     if (renderer && !renderer.setImage(image)) renderer = null;
     if (!renderer) loadFallbackImage();
     geometry = undefined;
@@ -61,18 +64,18 @@ export function createGlobe(canvas, onSelect, onMove, onViewportChange) {
   }
 
   function loadDetailedEarth() {
-    const image = new Image();
-    image.decoding = "async";
-    image.fetchPriority = "low";
-    image.onload = () => showEarth(image);
-    image.src = new URL("./assets/earth.jpg", import.meta.url).href;
+    detailedEarth ??= new Promise((resolve) => {
+      const image = new Image();
+      image.decoding = "async";
+      image.onload = () => { showEarth(image); resolve(); };
+      image.onerror = () => resolve();
+      image.src = new URL("./assets/earth.jpg", import.meta.url).href;
+    });
+    return detailedEarth;
   }
 
   const preview = new Image();
-  preview.onload = () => {
-    showEarth(preview);
-    loadDetailedEarth();
-  };
+  preview.onload = () => { if (!earth) showEarth(preview); };
   preview.onerror = loadDetailedEarth;
   preview.src = new URL("./assets/earth-preview.jpg", import.meta.url).href;
 
@@ -260,6 +263,7 @@ export function createGlobe(canvas, onSelect, onMove, onViewportChange) {
     frame = undefined;
     const box = canvas.getBoundingClientRect();
     if (!box.width || !box.height) return;
+    if (earth && (flat ? flatZoom : zoom) >= 2) loadDetailedEarth();
     const pixelLimit = renderer || fullResolution ? 1200 : 480;
     const scale = Math.min(1, pixelLimit / Math.max(box.width, box.height));
     const width = Math.max(1, Math.round(box.width * scale));
@@ -280,13 +284,15 @@ export function createGlobe(canvas, onSelect, onMove, onViewportChange) {
     } else if (renderer) {
       renderer.draw(width, height, radius, centerX, centerY, sinLat, cosLat, longitude);
       ctx.clearRect(0, 0, width, height);
-    } else {
+    } else if (earth) {
       if (geometry !== key) {
         base = drawEarth(width, height, radius, centerX, centerY, sinLat, cosLat);
         geometry = key;
       }
       ctx.putImageData(base, 0, 0);
     }
+    const showPoster = !flat && !earth;
+    if (poster?.hidden === showPoster) poster.hidden = !showPoster;
     if (cells.length) {
       if (flat) drawFlatCells(width, height, centerX, centerY, worldWidth);
       else drawGlobeCells(width, height, centerX, centerY, radius, sinLat, cosLat);
@@ -441,7 +447,8 @@ export function createGlobe(canvas, onSelect, onMove, onViewportChange) {
       canvas.setAttribute("aria-label", `Interactive ${flat ? "2D map. Drag or use the arrow keys to pan." : "Earth globe. Drag or use the arrow keys to rotate."} Pinch, scroll, or press plus and minus to zoom.`);
       redraw();
     },
-    exportImage(callback) {
+    async exportImage(callback) {
+      await loadDetailedEarth();
       if (frame !== undefined) cancelAnimationFrame(frame);
       draw(true);
       const image = document.createElement("canvas");

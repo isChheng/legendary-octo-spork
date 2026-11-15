@@ -5,8 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Explore satellite-observed burning activity from NASA FIRMS.">
   <title>FIRMS Fire Activity Explorer · Luminite</title>
-  <link rel="stylesheet" href="./styles.css?v=attribution">
-  <link rel="preload" href="./assets/earth-preview.jpg" as="image" fetchpriority="high">
+  <link rel="stylesheet" href="./styles.css?v=on-demand-map">
 </head>
 <body>
   <header class="topbar">
@@ -23,6 +22,9 @@
 
   <main>
     <section class="scene" id="explore" aria-label="Earth activity explorer">
+      <div id="globe-preview" aria-hidden="true">
+        <img src="./assets/globe-poster.jpg" width="192" height="192" fetchpriority="high" alt="">
+      </div>
       <canvas id="globe" width="1100" height="660" aria-label="Interactive Earth map. Drag or use the arrow keys to rotate. Pinch, scroll, or press plus and minus to zoom." tabindex="0"></canvas>
       <div id="maplibre" aria-hidden="true" inert></div>
       <div id="google-globe" aria-hidden="true" inert></div>
@@ -64,7 +66,10 @@
             <dl id="selection-details" aria-live="polite"></dl>
           </details>
           <p class="activity-value"><strong id="activity">—</strong> active cell-days</p>
-          <p class="comparison"><strong id="anomaly">—</strong> vs same-month median</p>
+          <div class="comparison">
+            <button id="compare-activity" type="button" disabled>Compare with past years</button>
+            <p id="anomaly" role="status" hidden></p>
+          </div>
           <p id="coverage-note" role="status">Checking archive coverage…</p>
         </aside>
 
@@ -112,8 +117,8 @@
           <button type="button" id="basemap" aria-pressed="false" hidden>Google 3D</button>
         </div>
         <div class="basemap-options" role="group" aria-label="Basemap">
-          <button type="button" id="style-dark" aria-pressed="false" disabled>Dark</button>
-          <button type="button" id="style-satellite" aria-pressed="true" disabled>NASA satellite</button>
+          <button type="button" id="style-dark" aria-pressed="false">Dark</button>
+          <button type="button" id="style-satellite" aria-pressed="true">NASA satellite</button>
         </div>
         <p id="basemap-status" role="status"></p>
       </div>
@@ -143,6 +148,6 @@
     <p>The map groups NASA FIRMS MODIS and VIIRS detections into a latitude–longitude grid for the selected dates and satellite record. At wide zoom levels, dots mark occupied cells. Zoom in to see smaller grid cells. Brighter marks contain more detections. Select a mark to see its detection count, days with detections, platforms, and summed fire radiative power (FRP) in megawatts. The Hotspots CSV contains individual detections. The dark map uses Natural Earth and geoBoundaries geography, and the satellite basemap adds NASA Blue Marble imagery.</p>
     <p><a href="https://www.spaceappschallenge.org/2026/challenges/modis-and-viirs-hot-spots/" target="_blank" rel="noopener">NASA Space Apps 2026 ↗</a></p>
   </dialog>
-  <script type="module" src="./app.js?v=progressive-load"></script>
+  <script type="module" src="./app.js?v=on-demand-map"></script>
 </body>
 </html>
