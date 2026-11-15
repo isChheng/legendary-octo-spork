@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Explore satellite-observed burning activity from NASA FIRMS.">
+  <title>FIRMS Fire Activity Explorer · Luminite</title>
+  <link rel="stylesheet" href="./styles.css?v=attribution">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Luminite</h1>
+      <span>NASA FIRMS</span>
+    </div>
+    <nav aria-label="Workspace">
+      <button type="button" data-view="explore" aria-pressed="true">Explore</button>
+      <button type="button" data-view="history" aria-pressed="false">History</button>
+      <button type="button" id="about">Methodology</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="scene" id="explore" aria-label="Earth activity explorer">
+      <canvas id="globe" width="1100" height="660" aria-label="Interactive Earth map. Drag or use the arrow keys to rotate. Pinch, scroll, or press plus and minus to zoom." tabindex="0"></canvas>
+      <div id="maplibre" aria-hidden="true" inert></div>
+      <div id="google-globe" aria-hidden="true" inert></div>
+      <p class="map-message" id="map-message" role="status"></p>
+
+      <aside class="location" aria-label="Area and activity">
+        <details class="filters">
+          <summary>Area &amp; data <span class="chevron" aria-hidden="true"></span></summary>
+          <div class="filter-fields">
+            <label for="region">Area of interest</label>
+            <select id="region">
+              <option value="global">Global</option><option value="cambodia">Cambodia</option>
+              <option value="seasia">Southeast Asia</option><option value="amazon">Amazon basin</option>
+              <option value="africa">Central and southern Africa</option><option value="custom">Custom coordinates</option>
+            </select>
+            <form id="bounds" hidden>
+              <label>South<input name="min_lat" type="number" step="any" min="-90" max="90" required value="10"></label>
+              <label>North<input name="max_lat" type="number" step="any" min="-90" max="90" required value="15"></label>
+              <label>West<input name="min_lon" type="number" step="any" min="-180" max="180" required value="102"></label>
+              <label>East<input name="max_lon" type="number" step="any" min="-180" max="180" required value="108"></label>
+              <button>Apply bounds</button>
+            </form>
+            <label for="dataset">Satellite record</label>
+            <select id="dataset"><option value="">Combined activity index</option></select>
+          </div>
+        </details>
+        <h2 id="area-name">Global</h2>
+        <p class="status" id="api-status" role="status">Connecting</p>
+      </aside>
+
+      <div class="scene-dock">
+        <aside class="activity" aria-label="Selected month activity">
+          <p id="map-attribution" class="map-attribution" hidden>
+            <a href="https://www.naturalearthdata.com/" target="_blank" rel="noopener">Natural Earth</a> ·
+            <a href="https://www.geoboundaries.org/" target="_blank" rel="noopener">geoBoundaries</a><span id="nasa-attribution" hidden> · <a href="https://www.earthdata.nasa.gov/data/tools/gibs" target="_blank" rel="noopener">NASA GIBS</a></span>
+          </p>
+          <details id="inspector" class="inspector">
+            <summary id="selection-title">Month overview</summary>
+            <dl id="selection-details" aria-live="polite"></dl>
+          </details>
+          <p class="activity-value"><strong id="activity">—</strong> active cell-days</p>
+          <p class="comparison"><strong id="anomaly">—</strong> vs same-month median</p>
+          <p id="coverage-note" role="status">Checking archive coverage…</p>
+        </aside>
+
+        <section class="timeline" aria-label="Burning calendar">
+          <header class="timeline-heading">
+            <h2>Burning calendar <small>UTC</small></h2>
+            <button type="button" id="whole-month" hidden>Whole month</button>
+            <div class="calendar-modes" role="group" aria-label="Select by">
+              <button type="button" data-mode="day" aria-pressed="true" title="Select one day">Day</button>
+              <button type="button" data-mode="week" aria-pressed="false" title="Select a Monday–Sunday week">Week</button>
+              <button type="button" data-mode="days" aria-pressed="false" title="Select several days. Shift-click adds a range.">Multi-day</button>
+            </div>
+          </header>
+          <div class="days" id="days" data-mode="day" aria-label="Days of the month"></div>
+          <p class="timeline-hint"><span id="map-key-label"></span><span id="map-coordinates"></span></p>
+        </section>
+
+        <section class="date-readout" aria-label="Observation date">
+          <p id="calendar-month"></p>
+          <div class="period">
+            <button type="button" id="previous" aria-label="Previous month">‹</button>
+            <label for="period-month" hidden>Choose month</label>
+            <select class="month-picker" id="period-month" aria-label="Choose month" disabled></select>
+            <label for="period-year" hidden>Choose year</label>
+            <select class="month-picker" id="period-year" aria-label="Choose year" disabled></select>
+            <button type="button" id="next" aria-label="Next month">›</button>
+          </div>
+          <div class="exports">
+            <button type="button" id="download-calendar">Calendar CSV</button>
+            <button type="button" id="download-points" title="Up to 5,000 original detections per satellite record">Hotspots CSV</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="map-tools" aria-label="Map controls">
+        <button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
+        <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
+        <button type="button" id="recenter" aria-label="Center on selected area" title="Center on selected area">⌖</button>
+        <button type="button" id="download-visual" aria-label="Download map PNG" title="Download map PNG">↓</button>
+      </div>
+      <div class="basemap-controls">
+        <div class="basemap-options" role="group" aria-label="Map view">
+          <button type="button" id="view-globe" aria-pressed="true">Globe</button>
+          <button type="button" id="view-flat" aria-pressed="false">2D map</button>
+          <button type="button" id="basemap" aria-pressed="false" hidden>Google 3D</button>
+        </div>
+        <div class="basemap-options" role="group" aria-label="Basemap">
+          <button type="button" id="style-dark" aria-pressed="false" disabled>Dark</button>
+          <button type="button" id="style-satellite" aria-pressed="true" disabled>NASA satellite</button>
+        </div>
+        <p id="basemap-status" role="status"></p>
+      </div>
+    </section>
+
+    <section id="history" class="history" hidden>
+      <div class="history-heading">
+        <div><span class="label" id="history-area"></span><h2>Monthly burning activity</h2></div>
+        <form id="history-form">
+          <label>From <input type="month" id="history-start" required></label>
+          <label>To <input type="month" id="history-end" required></label>
+          <button>Apply range</button>
+          <button type="button" id="download-history">History CSV</button>
+        </form>
+      </div>
+      <p id="history-note" class="muted" role="status"></p>
+      <p id="history-trend" class="history-trend" role="status" hidden></p>
+      <div class="history-scroll"><table id="history-table"></table></div>
+    </section>
+  </main>
+  <dialog id="methodology">
+    <form method="dialog"><button aria-label="Close methodology">×</button></form>
+    <h2>How activity is measured</h2>
+    <p>The calendar counts each 0.1° grid cell once per UTC day when it contains a nominal- or high-confidence detection. Repeated passes and detections from multiple instruments in that cell share the same count. Known non-vegetation hotspots are excluded. Detections with no hotspot type remain eligible.</p>
+    <p>Active cell-days are a shared activity index. Grid-cell area varies with latitude. Comparisons across months are adjusted for the satellites flying at the time, using factors measured where the satellites overlap; the adjustment is statistical and most reliable for large areas and whole months. This measure cannot identify individual fires or burned area.</p>
+    <p>The comparison uses up to five previous years for the same month and requires matching satellite coverage and at least two complete historical months. Coverage is inferred from monthly observation dates. Days without an activity bar have no qualifying records. Hatched months in History have no qualifying records.</p>
+    <p>The map groups NASA FIRMS MODIS and VIIRS detections into a latitude–longitude grid for the selected dates and satellite record. At wide zoom levels, dots mark occupied cells. Zoom in to see smaller grid cells. Brighter marks contain more detections. Select a mark to see its detection count, days with detections, platforms, and summed fire radiative power (FRP) in megawatts. The Hotspots CSV contains individual detections. The dark map uses Natural Earth and geoBoundaries geography, and the satellite basemap adds NASA Blue Marble imagery.</p>
+    <p><a href="https://www.spaceappschallenge.org/2026/challenges/modis-and-viirs-hot-spots/" target="_blank" rel="noopener">NASA Space Apps 2026 ↗</a></p>
+  </dialog>
+  <script type="module" src="./app.js?v=global-map"></script>
+</body>
+</html>
