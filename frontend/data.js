@@ -118,6 +118,7 @@ export function createData(baseUrl) {
     const run = queue.then(async () => {
       if (signal?.aborted) return [];
       const connection = await connect();
+      if (signal?.aborted) return [];
       const table = await connection.query(sql);
       return table.toArray().map((row) => row.toJSON());
     });
@@ -370,16 +371,16 @@ export function createData(baseUrl) {
   return async function request(path, params, signal) {
     const route = routes[path] ?? fail(`Luminite cannot answer ${path} without a server`);
     const search = new URLSearchParams(params ?? {});
+    const key = `${path}?${search}`;
+    if (results.has(key)) return results.get(key);
     const values = {};
     for (const key of new Set(search.keys())) {
       values[key] = key === "days" || key === "viewport" ? search.getAll(key) : search.get(key);
     }
-    const key = `${path}?${search}`;
-    let result = results.get(key);
-    if (!result) {
-      result = route(values, signal);
+    // A cancelled in-flight query must never supply an empty result to a newer request.
+    const result = await route(values, signal);
+    if (!signal?.aborted) {
       results.set(key, result);
-      result.then(() => { if (signal?.aborted) results.delete(key); }, () => results.delete(key));
       if (results.size > 80) results.delete(results.keys().next().value);
     }
     return result;

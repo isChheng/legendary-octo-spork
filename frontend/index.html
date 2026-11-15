@@ -6,6 +6,7 @@
   <meta name="description" content="Explore satellite-observed burning activity from NASA FIRMS.">
   <title>FIRMS Fire Activity Explorer · Luminite</title>
   <link rel="stylesheet" href="./styles.css?v=attribution">
+  <link rel="preload" href="./assets/earth-preview.jpg" as="image" fetchpriority="high">
 </head>
 <body>
   <header class="topbar">
@@ -49,7 +50,7 @@
           </div>
         </details>
         <h2 id="area-name">Global</h2>
-        <p class="status" id="api-status" role="status">Connecting</p>
+        <p class="status" id="api-status" role="status">Loading archive index…</p>
       </aside>
 
       <div class="scene-dock">
@@ -70,7 +71,7 @@
         <section class="timeline" aria-label="Burning calendar">
           <header class="timeline-heading">
             <h2>Burning calendar <small>UTC</small></h2>
-            <button type="button" id="whole-month" hidden>Whole month</button>
+            <button type="button" id="whole-month" disabled hidden>Whole month</button>
             <div class="calendar-modes" role="group" aria-label="Select by">
               <button type="button" data-mode="day" aria-pressed="true" title="Select one day">Day</button>
               <button type="button" data-mode="week" aria-pressed="false" title="Select a Monday–Sunday week">Week</button>
@@ -84,16 +85,16 @@
         <section class="date-readout" aria-label="Observation date">
           <p id="calendar-month"></p>
           <div class="period">
-            <button type="button" id="previous" aria-label="Previous month">‹</button>
+            <button type="button" id="previous" aria-label="Previous month" disabled>‹</button>
             <label for="period-month" hidden>Choose month</label>
             <select class="month-picker" id="period-month" aria-label="Choose month" disabled></select>
             <label for="period-year" hidden>Choose year</label>
             <select class="month-picker" id="period-year" aria-label="Choose year" disabled></select>
-            <button type="button" id="next" aria-label="Next month">›</button>
+            <button type="button" id="next" aria-label="Next month" disabled>›</button>
           </div>
           <div class="exports">
-            <button type="button" id="download-calendar">Calendar CSV</button>
-            <button type="button" id="download-points" title="Up to 5,000 original detections per satellite record">Hotspots CSV</button>
+            <button type="button" id="download-calendar" disabled>Calendar CSV</button>
+            <button type="button" id="download-points" title="Up to 5,000 original detections per satellite record" disabled>Hotspots CSV</button>
           </div>
         </section>
       </div>
@@ -125,7 +126,7 @@
           <label>From <input type="month" id="history-start" required></label>
           <label>To <input type="month" id="history-end" required></label>
           <button>Apply range</button>
-          <button type="button" id="download-history">History CSV</button>
+          <button type="button" id="download-history" disabled>History CSV</button>
         </form>
       </div>
       <p id="history-note" class="muted" role="status"></p>
@@ -142,6 +143,6 @@
     <p>The map groups NASA FIRMS MODIS and VIIRS detections into a latitude–longitude grid for the selected dates and satellite record. At wide zoom levels, dots mark occupied cells. Zoom in to see smaller grid cells. Brighter marks contain more detections. Select a mark to see its detection count, days with detections, platforms, and summed fire radiative power (FRP) in megawatts. The Hotspots CSV contains individual detections. The dark map uses Natural Earth and geoBoundaries geography, and the satellite basemap adds NASA Blue Marble imagery.</p>
     <p><a href="https://www.spaceappschallenge.org/2026/challenges/modis-and-viirs-hot-spots/" target="_blank" rel="noopener">NASA Space Apps 2026 ↗</a></p>
   </dialog>
-  <script type="module" src="./app.js?v=global-map"></script>
+  <script type="module" src="./app.js?v=progressive-load"></script>
 </body>
 </html>

@@ -1,9 +1,8 @@
-import { createGlobe } from "./globe.js";
+import { createGlobe } from "./globe.js?v=progressive-load";
 import { enhanceSelect } from "./choice-menu.js";
 import { mapDetail } from "./map-detail.js";
 import { seasonalMannKendall } from "./trend.js";
 import config from "./config.js";
-import { createData } from "./data.js";
 
 const $ = (id) => document.getElementById(id);
 const closeMenus = [
@@ -56,8 +55,11 @@ let exportRequest;
 let mapTimer;
 let mapKey;
 const mapCache = new Map();
+let anomalyTimer;
+let anomalyStarted;
 let historyRequest;
 let customBounds = asBounds(regions.cambodia);
+let regionChosen = false;
 let view = "explore";
 let selectedPeriod = "2025-02";
 let firstPeriod;
@@ -83,12 +85,16 @@ function selectedDatasets() {
 // `?data=/path` points one visit at a folder on this site, for testing.
 const dataOverride = new URLSearchParams(location.search).get("data");
 const dataUrl = /^\/(?!\/)/.test(dataOverride ?? "") ? dataOverride : config.dataUrl;
-const localData = dataUrl ? createData(dataUrl) : null;
+let browserData;
 
 async function api(path, params, signal) {
   if (path === "/map-config") {
-    if (localData || config.googleMapsKey) return { googleMapsKey: config.googleMapsKey || null };
-  } else if (localData) return localData(path, params, signal);
+    if (dataUrl || config.googleMapsKey) return { googleMapsKey: config.googleMapsKey || null };
+  } else if (dataUrl) {
+    browserData ??= import("./data.js?v=progressive-load").then(({ createData }) => createData(dataUrl));
+    const request = await browserData;
+    return request(path, params, signal);
+  }
   const query = params ? `?${new URLSearchParams(params)}` : "";
   const response = await fetch(path + query, { signal });
   if (!response.ok) {
@@ -420,12 +426,25 @@ function highlightWeek(week) {
 function scheduleMap() {
   if (!firstPeriod || view !== "explore") return;
   clearTimeout(mapTimer);
-  mapTimer = setTimeout(loadMap, 180);
+  clearTimeout(anomalyTimer);
+  mapTimer = setTimeout(async () => {
+    mapTimer = undefined;
+    await loadMap();
+    scheduleAnomaly();
+  }, 180);
+}
+
+function cancelMapLoad() {
+  clearTimeout(mapTimer);
+  mapTimer = undefined;
+  if (!mapRequest) return;
+  mapRequest.abort();
+  mapRequest = undefined;
+  mapKey = undefined;
 }
 
 function resetMap() {
-  clearTimeout(mapTimer);
-  mapRequest?.abort();
+  cancelMapLoad();
   exportRequest?.abort();
   exportRequest = new AbortController();
   mapCache.clear();
@@ -434,7 +453,7 @@ function resetMap() {
   $("map-key-label").textContent = "";
   $("map-message").textContent = "Loading map observations…";
   setCells([]);
-  loadMap();
+  scheduleMap();
 }
 
 async function loadMap() {
@@ -484,7 +503,25 @@ async function loadMap() {
       mapKey = undefined;
       $("map-message").textContent = error.message;
     }
+  } finally {
+    if (mapRequest === request) mapRequest = undefined;
   }
+}
+
+function scheduleAnomaly() {
+  const request = selectionRequest;
+  if (!request || request.signal.aborted || !calendar.length || anomalyStarted === request
+      || view !== "explore" || mapTimer !== undefined || mapRequest) return;
+  clearTimeout(anomalyTimer);
+  const period = selectedPeriod;
+  const bbox = bounds();
+  const rows = calendar;
+  anomalyTimer = setTimeout(() => {
+    anomalyStarted = request;
+    loadAnomaly(period, bbox, rows, request.signal).catch((error) => {
+      if (!request.signal.aborted) $("anomaly").title = `Historical comparison unavailable. ${error.message}`;
+    });
+  }, 400);
 }
 
 async function loadAnomaly(period, bbox, rows, signal) {
@@ -506,12 +543,16 @@ async function loadAnomaly(period, bbox, rows, signal) {
     }
   }
   if (prior.length < 2) return;
-  const historic = await api("/v1/calendar", {
-    ...bbox, ...sensorParam(), interval: "month", month, start_date: prior[0].start, end_date: prior.at(-1).end,
-  }, signal);
-  if (signal.aborted) return;
-  const matching = new Set(prior.map((span) => span.start));
-  const values = historic.data.filter((row) => matching.has(row.date) && row[key] != null).map((row) => row[key]).sort((a, b) => a - b);
+  const values = [];
+  const params = { ...bbox, ...sensorParam(), interval: "month" };
+  // Between yearly reads, newly queued calendar and map requests can run first.
+  for (const span of prior) {
+    const historic = await api("/v1/calendar", { ...params, start_date: span.start, end_date: span.end }, signal);
+    if (signal.aborted) return;
+    const value = historic.data.find((row) => row.date === span.start)?.[key];
+    if (value != null) values.push(value);
+  }
+  values.sort((a, b) => a - b);
   if (values.length < 2) return;
   const median = (values[Math.floor((values.length - 1) / 2)] + values[Math.ceil((values.length - 1) / 2)]) / 2;
   if (!median) return;
@@ -526,6 +567,10 @@ function sensorParam() {
 }
 
 async function loadSelection() {
+  $("area-name").textContent = areaName();
+  $("history-area").textContent = areaName() + " · " + $("dataset").selectedOptions[0].textContent;
+  if (!firstPeriod) return;
+  clearTimeout(anomalyTimer);
   selectionRequest?.abort();
   const request = new AbortController();
   selectionRequest = request;
@@ -534,8 +579,6 @@ async function loadSelection() {
   $("next").disabled = !lastPeriod || period >= lastPeriod;
   const bbox = bounds();
   const { start, end } = dates(period);
-  $("area-name").textContent = areaName();
-  $("history-area").textContent = areaName() + " · " + $("dataset").selectedOptions[0].textContent;
   selected = [];
   rangeAnchor = null;
   calendar = [];
@@ -569,9 +612,9 @@ async function loadSelection() {
         $("coverage-note").textContent = [existing, "Missing this month: " + missing.map((key) => datasets[key]).join(", ") + "."].filter(Boolean).join(" ");
       }
     }
-    await loadAnomaly(period, bbox, calendar, request.signal);
+    scheduleAnomaly();
   } catch (error) {
-    if (!request.signal.aborted) $("coverage-note").textContent = calendar.length ? "Historical comparison unavailable." : error.message;
+    if (!request.signal.aborted) $("coverage-note").textContent = error.message;
   }
 }
 
@@ -644,13 +687,17 @@ async function downloadPoints() {
 }
 
 async function loadHistory() {
+  const note = $("history-note");
+  if (!firstPeriod) {
+    note.textContent = $("api-status").dataset.state === "error" ? "Archive unavailable." : "Loading archive index…";
+    return;
+  }
   historyRequest?.abort();
   const request = new AbortController();
   historyRequest = request;
   const from = $("history-start").value;
   const to = $("history-end").value;
   const table = $("history-table");
-  const note = $("history-note");
   table.replaceChildren();
   $("history-trend").hidden = true;
   $("download-history").disabled = true;
@@ -668,6 +715,7 @@ async function loadHistory() {
     const lastYear = Number(to.slice(0, 4));
     const rows = [];
     for (let year = lastYear; year >= firstYear; year--) {
+      if (request.signal.aborted) return;
       const start = year === firstYear ? dates(from).start : `${year}-01-01`;
       const end = year === lastYear ? dates(to).end : `${year}-12-31`;
       if (!monthNames.some((_, index) => {
@@ -779,18 +827,18 @@ function setView(next) {
   $("explore").hidden = next !== "explore";
   $("history").hidden = next !== "history";
   document.querySelectorAll("[data-view]").forEach((button) => button.setAttribute("aria-pressed", button.dataset.view === next));
-  if (next === "history") loadHistory();
-  else {
+  if (next === "history") {
+    cancelMapLoad();
+    clearTimeout(anomalyTimer);
+    loadHistory();
+  } else {
+    historyRequest?.abort();
     mapLibre?.resize();
     scheduleMap();
   }
 }
 
 async function init() {
-  $("download-points").disabled = true;
-  $("download-calendar").disabled = true;
-  $("download-history").disabled = true;
-  $("whole-month").disabled = true;
   try {
     const [health, page, months] = await Promise.all([api("/health"), api("/v1/coverage"), api("/v1/coverage/monthly")]);
     coverage = page.data;
@@ -819,7 +867,10 @@ async function init() {
       yearOptions.append(new Option(String(year)));
     }
     $("period-year").replaceChildren(yearOptions);
-    if (areaLabel?.toLowerCase().includes("cambodia")) $("region").value = "cambodia";
+    if (!regionChosen && areaLabel?.toLowerCase().includes("cambodia")) {
+      $("region").value = "cambodia";
+      centerMaps();
+    }
     const platforms = new Set(coverage.map((row) => row.platform)).size;
     const latestComplete = [...monthCoverage.keys()].sort().reverse().find((period) =>
       (monthCoverage.get(period) ?? []).filter((row) => row.is_complete_month && row.platform_complete).length === platforms);
@@ -828,16 +879,17 @@ async function init() {
     $("period-year").disabled = false;
     $("history-start").value = first;
     $("history-end").value = latest;
-    centerMaps();
     loadSelection();
   } catch (error) {
     status("Archive unavailable", "error");
     $("coverage-note").textContent = error.message;
     $("map-message").textContent = "Connect a validated FIRMS archive to view observations.";
+    if (view === "history") $("history-note").textContent = "Archive unavailable.";
   }
 }
 
 $("region").addEventListener("change", () => {
+  regionChosen = true;
   $("bounds").hidden = $("region").value !== "custom";
   centerMaps();
   loadSelection();
@@ -888,13 +940,17 @@ $("download-calendar").addEventListener("click", () => csvDownload(`firms-${sele
 $("download-points").addEventListener("click", downloadPoints);
 $("download-history").addEventListener("click", () => csvDownload("firms-monthly-history.csv", historyRows));
 $("download-visual").addEventListener("click", () => {
-  const filename = `firms-${selectionSlug()}-map.png`;
+  const filename = firstPeriod ? `firms-${selectionSlug()}-map.png` : "firms-map.png";
   activeGlobe().exportImage?.((blob) => {
     if (blob) download(filename, blob);
   });
 });
 document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
 
-init();
-initMapLibre();
-initGoogleMap();
+centerMaps();
+// Give the interactive globe a frame before loading the archive or the enhanced basemap.
+requestAnimationFrame(() => requestAnimationFrame(() => {
+  init();
+  initMapLibre();
+  initGoogleMap();
+}));

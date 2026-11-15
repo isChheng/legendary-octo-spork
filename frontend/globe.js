@@ -21,7 +21,7 @@ export function createGlobe(canvas, onSelect, onMove, onViewportChange) {
   canvas.before(earthCanvas);
   let renderer = createEarthRenderer(earthCanvas);
   const texture = document.createElement("canvas");
-  const earth = new Image();
+  let earth;
   let source;
   let longitude = 104.8;
   let latitude = 17;
@@ -43,7 +43,7 @@ export function createGlobe(canvas, onSelect, onMove, onViewportChange) {
   let reportedViewport;
 
   function loadFallbackImage() {
-    if (!earth.naturalWidth || source) return;
+    if (!earth?.naturalWidth || source) return;
     const pixels = texture.getContext("2d", { willReadFrequently: true });
     texture.width = earth.naturalWidth;
     texture.height = earth.naturalHeight;
@@ -51,13 +51,30 @@ export function createGlobe(canvas, onSelect, onMove, onViewportChange) {
     source = pixels.getImageData(0, 0, texture.width, texture.height);
   }
 
-  earth.onload = () => {
-    if (renderer && !renderer.setImage(earth)) renderer = null;
+  function showEarth(image) {
+    earth = image;
+    source = undefined;
+    if (renderer && !renderer.setImage(image)) renderer = null;
     if (!renderer) loadFallbackImage();
     geometry = undefined;
     redraw();
+  }
+
+  function loadDetailedEarth() {
+    const image = new Image();
+    image.decoding = "async";
+    image.fetchPriority = "low";
+    image.onload = () => showEarth(image);
+    image.src = new URL("./assets/earth.jpg", import.meta.url).href;
+  }
+
+  const preview = new Image();
+  preview.onload = () => {
+    showEarth(preview);
+    loadDetailedEarth();
   };
-  earth.src = new URL("./assets/earth.jpg", import.meta.url).href;
+  preview.onerror = loadDetailedEarth;
+  preview.src = new URL("./assets/earth-preview.jpg", import.meta.url).href;
 
   earthCanvas.addEventListener("webglcontextlost", () => {
     renderer = null;
@@ -106,7 +123,7 @@ export function createGlobe(canvas, onSelect, onMove, onViewportChange) {
     const north = centerY - (90 - latitude) * worldWidth / 360;
     ctx.fillStyle = "#131d2a";
     ctx.fillRect(0, north, width, worldWidth / 2);
-    if (!earth.naturalWidth) return;
+    if (!earth?.naturalWidth) return;
     // Draw the adjacent copy when the viewport crosses the antimeridian.
     const left = west > 0 ? west - worldWidth : west;
     for (let x = left; x < width; x += worldWidth) {
